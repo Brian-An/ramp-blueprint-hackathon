@@ -7,7 +7,7 @@ import {
   actionSchema, activitySchema, customerSchema, demoSeedSchema, emailSchema,
   invoiceSchema, investigationSummarySchema, outboxEntrySchema, paymentSchema,
   proposalSchema, settingsSchema, workspaceSnapshotSchema,
-  type Customer, type DemoSeed, type Invoice, type Payment, type WorkspaceSnapshot,
+  type Action, type Customer, type DemoSeed, type Email, type Invoice, type Payment, type WorkspaceSnapshot,
 } from "./contracts";
 
 const invoiceColumns = `id, customer_id AS customerId, number, amount_cents AS amountCents,
@@ -19,6 +19,7 @@ const paymentColumns = `id, event_id AS eventId, invoice_id AS invoiceId, amount
 const persistedProposalSchema = z.string().transform(value => proposalSchema.parse(JSON.parse(value) as unknown));
 
 export function createStore(db: Database.Database) {
+  db.function("normalized_email_text", { deterministic: true }, (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim());
   db.pragma("foreign_keys = ON");
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
@@ -102,6 +103,30 @@ export function createStore(db: Database.Database) {
     return z.array(paymentSchema).parse(db.prepare(`SELECT ${paymentColumns} FROM payments WHERE invoice_id = ? ORDER BY received_date, id`).all(invoiceId));
   }
 
+  function searchEmails(customerId: string, query: string): Email[] {
+    const normalized = query.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+    const literal = `%${normalized.replace(/[\\%_]/g, "\\$&")}%`;
+    return z.array(emailSchema).parse(db.prepare(`SELECT ${emailColumns} FROM emails
+      WHERE customer_id = ? AND (normalized_email_text(subject) LIKE ? ESCAPE '\\'
+        OR normalized_email_text(body) LIKE ? ESCAPE '\\')
+      ORDER BY sent_at DESC, id`).all(customerId, literal, literal));
+  }
+
+  function getThread(customerId: string, threadId: string): Email[] {
+    return z.array(emailSchema).parse(db.prepare(`SELECT ${emailColumns} FROM emails
+      WHERE customer_id = ? AND thread_id = ? ORDER BY julianday(sent_at) DESC, id`).all(customerId, threadId));
+  }
+
+  function getActionHistory(invoiceId: string): Action[] {
+    return z.array(actionSchema.extend({ proposal: persistedProposalSchema })).parse(db.prepare(`SELECT
+      id, invoice_id AS invoiceId, generation_id AS generationId, context_version AS contextVersion,
+      version, proposal, status FROM actions WHERE invoice_id = ? ORDER BY rowid`).all(invoiceId));
+  }
+
+  function getDemoDate(): string {
+    return settingsSchema.pick({ demoDate: true }).parse(db.prepare("SELECT demo_date AS demoDate FROM settings WHERE id = 1").get()).demoDate;
+  }
+
   function snapshot(): WorkspaceSnapshot {
     const settings = settingsSchema.parse(db.prepare("SELECT generation_id AS generationId, demo_date AS demoDate FROM settings WHERE id = 1").get());
     const invoices = z.array(invoiceSchema).parse(db.prepare(`SELECT ${invoiceColumns} FROM invoices ORDER BY number`).all());
@@ -126,5 +151,7 @@ export function createStore(db: Database.Database) {
     });
   }
 
-  return { seed, snapshot, getInvoice, getCustomer, getPayments, close: () => db.close() };
+  return { seed, snapshot, getInvoice, getCustomer, getPayments, searchEmails, getThread, getActionHistory, getDemoDate, close: () => db.close() };
 }
+
+export type Store = ReturnType<typeof createStore>;
