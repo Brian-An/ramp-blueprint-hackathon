@@ -1,0 +1,28 @@
+src/lib/agent/tools.ts
+  s_774c09bc79cfb4::t_fa051c9e2bf91d 1-91
+src/lib/store.ts
+  s_774c09bc79cfb4::t_335729282d8314 10,22,106-129,154,156-157
+tests/agent.test.ts
+  s_774c09bc79cfb4::t_4bc0d210353b5e 1-194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62e332bfabbf8d83ad4e3d46d275721f7a34f1ed",
+  "prompts": {},
+  "humans": {
+    "h_3f7c194ad24a0c": {
+      "author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  },
+  "sessions": {
+    "s_774c09bc79cfb4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f9ba-dce4-71e3-82ce-6fb801a1bf38",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  }
+}
