@@ -1,0 +1,44 @@
+.env.example
+  s_774c09bc79cfb4::t_b80311e846fd92 1-4
+src/app/api/investigations/route.ts
+  s_774c09bc79cfb4::t_1660e0fb027a27 1-38
+src/lib/agent/errors.ts
+  s_774c09bc79cfb4::t_a9a25806c52f60 1-7
+src/lib/agent/model.ts
+  s_774c09bc79cfb4::t_9b527b903d3eef 1-100
+src/lib/agent/prompt.ts
+  s_774c09bc79cfb4::t_8f2468dd4d5ee4 1-13
+src/lib/agent/run.ts
+  s_774c09bc79cfb4::t_7fa9e6d5a367c8 1-91
+src/lib/http.ts
+  s_774c09bc79cfb4::t_c4135627c80e99 1-39
+src/lib/store.ts
+  s_774c09bc79cfb4::t_7cf551126bb247 5-6,12,128-163,192
+tests/agent.test.ts
+  s_774c09bc79cfb4::t_957ed0bf399b46 41,196-347
+tests/fixtures/model.ts
+  s_774c09bc79cfb4::t_f42bf24f69a53a 1-15
+tests/investigations.test.ts
+  s_774c09bc79cfb4::t_c94382e54af96e 1-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05ac6c3bbef15213f6594e5af6521e0305d3b34f",
+  "prompts": {},
+  "humans": {
+    "h_3f7c194ad24a0c": {
+      "author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  },
+  "sessions": {
+    "s_774c09bc79cfb4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f9ba-dce4-71e3-82ce-6fb801a1bf38",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  }
+}
