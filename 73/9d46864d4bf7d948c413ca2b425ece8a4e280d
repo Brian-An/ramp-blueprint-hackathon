@@ -1,0 +1,77 @@
+.gitignore
+  h_3f7c194ad24a0c 1
+  s_774c09bc79cfb4::t_1762b97a11c2e7 2-48
+.nvmrc
+  s_774c09bc79cfb4::t_45295cef244745 1
+AGENTS.md
+  s_774c09bc79cfb4::t_8aea59ec29a3b9 1-9
+CLAUDE.md
+  s_774c09bc79cfb4::t_13a5a52b214679 1
+docs/superpowers/plans/2026-10-01-invoice-agent.md
+  s_774c09bc79cfb4::t_373a027cbe48a9 1-644
+docs/superpowers/specs/2026-10-01-invoice-agent-design.md
+  s_774c09bc79cfb4::t_0bf28dc00a9b26 1-139
+eslint.config.mjs
+  s_774c09bc79cfb4::t_87ce7aab69331d 1-18
+next.config.ts
+  s_774c09bc79cfb4::t_db5e135d670610 1-7
+package-lock.json
+  s_774c09bc79cfb4::t_a5e8e7542cf255 1-8601
+package.json
+  s_774c09bc79cfb4::t_375305ca0c7d1b 1-47
+playwright.config.ts
+  s_774c09bc79cfb4::t_4cf48a293db970 1-15
+postcss.config.mjs
+  s_774c09bc79cfb4::t_46192550233f7b 1-7
+src/app/api/workspace/route.ts
+  s_774c09bc79cfb4::t_2b20cdc4d9926a 1-8
+src/app/globals.css
+  s_774c09bc79cfb4::t_df064b0ac0ae4d 1-62
+src/app/layout.tsx
+  s_774c09bc79cfb4::t_6f2a0e795f4364 1-11
+src/app/page.tsx
+  s_774c09bc79cfb4::t_dda63dff07d372 1-14
+src/components/workspace.tsx
+  s_774c09bc79cfb4::t_998a8c5e9cebbd 1-76
+src/lib/accounting.ts
+  s_774c09bc79cfb4::t_541a4e3e6761a1 1-14
+src/lib/contracts.ts
+  s_774c09bc79cfb4::t_d8cc8774429b0a 1-80
+src/lib/db.ts
+  s_774c09bc79cfb4::t_e72fb87b958683 1-20
+src/lib/demo-data.ts
+  s_774c09bc79cfb4::t_6363ae39f7e33c 1-68
+src/lib/store.ts
+  s_774c09bc79cfb4::t_5c6436c79c6a9c 1-130
+tests/domain.test.ts
+  s_774c09bc79cfb4::t_a463e8eb40b6c2 1-129
+tests/helpers.ts
+  s_774c09bc79cfb4::t_92e9f44777270d 1-10
+tests/workspace.spec.ts
+  s_774c09bc79cfb4::t_0d7e415898e963 1-28
+tsconfig.json
+  s_774c09bc79cfb4::t_f228c6fc3321c7 1-34
+vitest.config.ts
+  s_774c09bc79cfb4::t_9537a955dc6c98 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "739d46864d4bf7d948c413ca2b425ece8a4e280d",
+  "prompts": {},
+  "humans": {
+    "h_3f7c194ad24a0c": {
+      "author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  },
+  "sessions": {
+    "s_774c09bc79cfb4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f9ba-dce4-71e3-82ce-6fb801a1bf38",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  }
+}
