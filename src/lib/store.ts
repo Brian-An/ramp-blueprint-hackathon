@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { overdueDays, remainingCents } from "./accounting";
+import { RunError } from "./agent/errors";
+import { validateProposalAction } from "./agent/run";
 import { INITIAL_DEMO_DATE } from "./demo-data";
 import {
   actionSchema, activitySchema, customerSchema, demoSeedSchema, emailSchema,
   invoiceSchema, investigationSummarySchema, outboxEntrySchema, paymentSchema,
   proposalSchema, settingsSchema, workspaceSnapshotSchema,
-  type Action, type Customer, type DemoSeed, type Email, type Invoice, type Payment, type WorkspaceSnapshot,
+  type Action, type Customer, type DemoSeed, type Email, type Invoice, type Payment, type Proposal, type WorkspaceSnapshot,
 } from "./contracts";
 
 const invoiceColumns = `id, customer_id AS customerId, number, amount_cents AS amountCents,
@@ -123,6 +125,42 @@ export function createStore(db: Database.Database) {
       version, proposal, status FROM actions WHERE invoice_id = ? ORDER BY rowid`).all(invoiceId));
   }
 
+  function getSettings() {
+    return settingsSchema.parse(db.prepare("SELECT generation_id AS generationId, demo_date AS demoDate FROM settings WHERE id = 1").get());
+  }
+
+  function getInvestigation(invoiceId: string, generationId: string, contextVersion: number): { proposal: Proposal; action: Action | null } | undefined {
+    const row = db.prepare("SELECT proposal FROM investigations WHERE invoice_id = ? AND generation_id = ? AND context_version = ?").get(invoiceId, generationId, contextVersion);
+    if (!row) return undefined;
+    const { proposal } = z.object({ proposal: persistedProposalSchema }).parse(row);
+    const action = getActionHistory(invoiceId).find(action => action.generationId === generationId && action.contextVersion === contextVersion) ?? null;
+    return { proposal, action };
+  }
+
+  function saveInvestigation(invoiceId: string, generationId: string, contextVersion: number, input: Proposal): Action | null {
+    const proposal = proposalSchema.parse(input);
+    return db.transaction(() => {
+      const settings = getSettings();
+      const invoice = getInvoice(invoiceId);
+      if (!invoice) throw new RunError("INVOICE_NOT_FOUND");
+      if (settings.generationId !== generationId || invoice.contextVersion !== contextVersion) throw new RunError("STALE_CONTEXT");
+      const existing = getInvestigation(invoiceId, generationId, contextVersion);
+      if (existing) return existing.action;
+      validateProposalAction(proposal, getCustomer(invoice.customerId)?.email, settings.demoDate);
+      const createdAt = new Date().toISOString();
+      const json = JSON.stringify(proposal);
+      db.prepare("UPDATE actions SET status = 'superseded', version = version + 1 WHERE invoice_id = ? AND status IN ('pending', 'accepted')").run(invoiceId);
+      db.prepare("INSERT INTO investigations (id, invoice_id, generation_id, context_version, proposal, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(randomUUID(), invoiceId, generationId, contextVersion, json, createdAt);
+      let action: Action | null = null;
+      if (proposal.action.kind !== "none") {
+        action = { id: randomUUID(), invoiceId, generationId, contextVersion, version: 1, proposal, status: "pending" };
+        db.prepare("INSERT INTO actions (id, invoice_id, generation_id, context_version, version, proposal, status) VALUES (?, ?, ?, ?, 1, ?, 'pending')").run(action.id, invoiceId, generationId, contextVersion, json);
+      }
+      db.prepare("INSERT INTO activity (id, invoice_id, kind, description, created_at) VALUES (?, ?, 'investigation', ?, ?)").run(randomUUID(), invoiceId, proposal.explanation, createdAt);
+      return action;
+    }).immediate();
+  }
+
   function getDemoDate(): string {
     return settingsSchema.pick({ demoDate: true }).parse(db.prepare("SELECT demo_date AS demoDate FROM settings WHERE id = 1").get()).demoDate;
   }
@@ -151,7 +189,7 @@ export function createStore(db: Database.Database) {
     });
   }
 
-  return { seed, snapshot, getInvoice, getCustomer, getPayments, searchEmails, getThread, getActionHistory, getDemoDate, close: () => db.close() };
+  return { seed, snapshot, getInvoice, getCustomer, getPayments, searchEmails, getThread, getActionHistory, getDemoDate, getSettings, getInvestigation, saveInvestigation, close: () => db.close() };
 }
 
 export type Store = ReturnType<typeof createStore>;

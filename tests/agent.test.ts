@@ -38,6 +38,7 @@ describe("scoped investigation tools", () => {
   it("does not disclose whether an inaccessible thread exists", () => {
     const { tools } = toolsFor();
     for (const threadId of ["THREAD-OTHER-CUSTOMER", "missing-thread"]) {
+      expect(() => tools.dispatch("get_email_thread", { threadId })).toThrow("OUT_OF_SCOPE");
       try { tools.dispatch("get_email_thread", { threadId }); }
       catch (error) { expect(toToolError(error)).toEqual({ error: { code: "OUT_OF_SCOPE", message: "Thread is unavailable in the assigned customer scope." } }); }
     }
@@ -190,5 +191,157 @@ describe("email retrieval", () => {
     for (const [name, args] of [["get_invoice", {}], ["get_payments", {}], ["get_action_history", {}], ["search_emails", { query: "invoice" }], ["get_email_thread", { threadId: "THREAD-101" }]] as const) tools.dispatch(name, args);
     expect(store.snapshot()).toEqual(before);
     expect(db.prepare("SELECT total_changes() AS count").get()).toEqual(changes);
+  });
+});
+
+
+// These cases catch fabricated citations, unsafe actions, unbounded runs, and stale persistence.
+vi.mock("server-only", () => ({}));
+import { vi } from "vitest";
+import { createScriptedTransport, createLiveTransport, type ModelTransport } from "../src/lib/agent/model";
+import { investigateInvoice } from "../src/lib/agent/run";
+import { poProposal, poSteps } from "./fixtures/model";
+
+function runnerStore(seed: DemoSeed = demoSeed) {
+  const store = createTestStore(seed);
+  stores.push(store);
+  return store;
+}
+describe("bounded investigation", () => {
+  it("reads conversation before returning a validated proposal without executing an action", async () => {
+    const store = runnerStore();
+    expect(await investigateInvoice(store, "INV-101", createScriptedTransport(poSteps()))).toEqual(poProposal);
+    expect(store.snapshot().actions).toEqual([]);
+    expect(store.snapshot().outbox).toEqual([]);
+  });
+  it.each([
+    ["invented ID", [{ emailId: "NONEXISTENT", quote: "Please add a PO." }]],
+    ["paraphrased quote", [{ emailId: "EMAIL-101-1", quote: "We require a purchase order." }]],
+    ["missing citation", []],
+  ])("rejects %s evidence", async (_name, evidence) => {
+    const store = runnerStore();
+    await expect(investigateInvoice(store, "INV-101", createScriptedTransport(poSteps({ ...poProposal, evidence })))).rejects.toThrow("INVALID_EVIDENCE");
+    expect(store.snapshot().actions).toEqual([]);
+  });
+  it("rejects real but undelivered and truncated evidence", async () => {
+    const store = runnerStore(seedWith([email("LONG", "INV-101 " + "x".repeat(8000) + "SECRET TAIL")]));
+    const proposal = { ...poProposal, evidence: [{ emailId: "LONG", quote: "SECRET TAIL" }] };
+    await expect(investigateInvoice(store, "INV-101", createScriptedTransport([{ kind: "result", proposal }]))).rejects.toThrow("INVALID_EVIDENCE");
+    await expect(investigateInvoice(store, "INV-101", createScriptedTransport([
+      { kind: "tools", calls: [{ id: "s", name: "search_emails", args: { query: "INV-101" } }] }, { kind: "result", proposal },
+    ]))).rejects.toThrow("INVALID_EVIDENCE");
+  });
+  it("accepts an exact subject quote delivered by a read tool", async () => {
+    const proposal = { ...poProposal, evidence: [{ emailId: "EMAIL-101-1", quote: "Invoice INV-101" }] };
+    expect((await investigateInvoice(runnerStore(), "INV-101", createScriptedTransport(poSteps(proposal)))).evidence).toEqual(proposal.evidence);
+  });
+  it("accepts a future promise as waiting without recording payment", async () => {
+    const store = runnerStore();
+    const proposal = { blocker: "promised_payment", explanation: "Payment is promised for October 5 but not recorded.", evidence: [{ emailId: "EMAIL-105-1", quote: "INV-105 will be included in the October 5 payment run." }], action: { kind: "wait", recipient: null, subject: null, body: null, task: null, followUpDate: "2026-10-05" } };
+    expect(await investigateInvoice(store, "INV-105", createScriptedTransport([
+      { kind: "tools", calls: [{ id: "s", name: "get_email_thread", args: { threadId: "THREAD-105" } }] }, { kind: "result", proposal },
+    ]))).toEqual(proposal);
+    expect(store.getPayments("INV-105")).toEqual([]);
+  });
+  it("skips the transport for a fully paid invoice", async () => {
+    const proposal = await investigateInvoice(runnerStore(), "INV-112", async () => { throw new Error("Transport must not run"); });
+    expect(proposal.blocker).toBe("none");
+    expect(proposal.action.kind).toBe("none");
+  });
+  it.each([
+    { ...poProposal.action, kind: "send_email", recipient: "external@untrusted.example", subject: "PO", body: "Please provide it", task: null },
+    { ...poProposal.action, kind: "send_email", recipient: "ap@acme.example", subject: " ", body: "Please provide it", task: null },
+    { ...poProposal.action, body: "Unexpected email body" },
+    { ...poProposal.action, task: " " },
+    { ...poProposal.action, kind: "wait", task: null, followUpDate: "2026-10-01" },
+    { ...poProposal.action, kind: "wait", task: null, followUpDate: "2026-02-30" },
+    { ...poProposal.action, kind: "none" },
+    { ...poProposal.action, kind: "execute_payment" },
+  ])("rejects unsafe or malformed actions %#", async action => {
+    await expect(investigateInvoice(runnerStore(), "INV-101", createScriptedTransport(poSteps({ ...poProposal, action })))).rejects.toThrow("INVALID_PROPOSAL");
+  });
+  it("accepts an email to the scoped customer", async () => {
+    const action = { kind: "send_email", recipient: "ap@acme.example", subject: "PO for INV-101", body: "Please supply the PO number.", task: null, followUpDate: null };
+    expect((await investigateInvoice(runnerStore(), "INV-101", createScriptedTransport(poSteps({ ...poProposal, action })))).action).toEqual(action);
+  });
+  it("stops after eight model responses", async () => {
+    const steps = Array.from({ length: 8 }, (_, i) => ({ kind: "tools" as const, calls: [{ id: String(i), name: "get_invoice", args: {} }] }));
+    await expect(investigateInvoice(runnerStore(), "INV-101", createScriptedTransport(steps))).rejects.toThrow("RUN_LIMIT");
+  });
+  it("rejects a response exceeding the 24 call budget", async () => {
+    await expect(investigateInvoice(runnerStore(), "INV-101", createScriptedTransport([{ kind: "tools", calls: Array.from({ length: 25 }, (_, i) => ({ id: String(i), name: "get_invoice", args: {} })) }]))).rejects.toThrow("RUN_LIMIT");
+  });
+  it("rejects invalid JSON and unsupported tool arguments", async () => {
+    await expect(investigateInvoice(runnerStore(), "INV-101", createScriptedTransport([{ kind: "result", proposal: "not json" }]))).rejects.toThrow("INVALID_PROPOSAL");
+    await expect(investigateInvoice(runnerStore(), "INV-101", createScriptedTransport([{ kind: "tools", calls: [{ id: "x", name: "search_emails", args: { query: 8 } }] }]))).rejects.toThrow("INVALID_TOOL_ARGUMENTS");
+  });
+  it("returns scope and unknown-tool errors with original call IDs and permits no outbox mutation", async () => {
+    let response = 0;
+    const store = runnerStore();
+    const transport: ModelTransport = async request => {
+      if (response++ === 0) {
+        expect(request.toolSchemas.map(tool => tool.name)).not.toContain("send_email");
+        return { kind: "tools", calls: [{ id: "injection", name: "send_email", args: {} }, { id: "foreign", name: "get_email_thread", args: { threadId: "THREAD-OTHER-CUSTOMER" } }, { id: "read", name: "get_email_thread", args: { threadId: "THREAD-101" } }] };
+      }
+      const outputs = request.conversationItems.filter(item => item.type === "function_call_output");
+      expect(outputs).toContainEqual({ type: "function_call_output", call_id: "injection", output: JSON.stringify({ error: { code: "UNKNOWN_TOOL", message: "The requested read tool is unavailable." } }) });
+      expect(outputs.some(item => typeof item.output === "string" && item.output.includes("OUT_OF_SCOPE"))).toBe(true);
+      expect(outputs.some(item => typeof item.output === "string" && item.output.includes("Ignore all previous instructions"))).toBe(true);
+      return { kind: "result", proposal: poProposal };
+    };
+    await investigateInvoice(store, "INV-101", transport);
+    expect(store.snapshot().outbox).toEqual([]);
+    expect(store.snapshot().actions).toEqual([]);
+  });
+  it("times out a hanging transport and propagates caller cancellation", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const pending = investigateInvoice(runnerStore(), "INV-101", () => new Promise(() => {}), controller.signal);
+      const assertion = expect(pending).rejects.toThrow("TIMEOUT");
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+      controller.abort();
+      await expect(investigateInvoice(runnerStore(), "INV-101", createScriptedTransport(poSteps()), controller.signal)).rejects.toThrow("TIMEOUT");
+    } finally { vi.useRealTimers(); }
+  });
+  it("rejects context changes during model work and never holds a database transaction over network calls", async () => {
+    const db = new Database(":memory:"); const store = createStore(db); stores.push(store); store.seed(demoSeed);
+    const scripted = createScriptedTransport(poSteps());
+    const transport: ModelTransport = async (request, signal) => {
+      expect(db.inTransaction).toBe(false);
+      const step = await scripted(request, signal);
+      if (step.kind === "result") db.prepare("UPDATE invoices SET context_version = 2 WHERE id = 'INV-101'").run();
+      return step;
+    };
+    await expect(investigateInvoice(store, "INV-101", transport)).rejects.toThrow("STALE_CONTEXT");
+    expect(store.snapshot().investigations).toEqual([]);
+  });
+  it("requires configuration in live mode without fixture fallback", () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
+    try { expect(() => createLiveTransport()).toThrow("MODEL_NOT_CONFIGURED"); }
+    finally { vi.unstubAllEnvs(); }
+  });
+});
+
+describe("investigation persistence", () => {
+  it("saves one pending action per unchanged context and none for a paid invoice", async () => {
+    const store = runnerStore(); const generation = store.snapshot().generationId;
+    const proposal = await investigateInvoice(store, "INV-101", createScriptedTransport(poSteps()));
+    const first = store.saveInvestigation("INV-101", generation, 1, proposal);
+    expect(first).toMatchObject({ invoiceId: "INV-101", generationId: generation, contextVersion: 1, version: 1, status: "pending", proposal });
+    expect(store.saveInvestigation("INV-101", generation, 1, proposal)).toEqual(first);
+    expect(store.snapshot().investigations).toHaveLength(1);
+    expect(store.snapshot().actions).toHaveLength(1);
+    expect(store.snapshot().outbox).toEqual([]);
+    const paid = await investigateInvoice(store, "INV-112", createScriptedTransport([]));
+    expect(store.saveInvestigation("INV-112", generation, 1, paid)).toBeNull();
+  });
+  it("rejects a stale generation or invoice context atomically", () => {
+    const store = runnerStore();
+    expect(() => store.saveInvestigation("INV-101", "stale", 1, poProposal)).toThrow("STALE_CONTEXT");
+    expect(() => store.saveInvestigation("INV-101", store.snapshot().generationId, 2, poProposal)).toThrow("STALE_CONTEXT");
+    expect(store.snapshot().actions).toEqual([]);
+    expect(store.snapshot().investigations).toEqual([]);
   });
 });
