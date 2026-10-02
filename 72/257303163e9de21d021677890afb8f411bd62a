@@ -1,0 +1,56 @@
+.gitignore
+  s_774c09bc79cfb4::t_f4b97d0c198e36 49-52
+eslint.config.mjs
+  s_774c09bc79cfb4::t_d1678bad4bfb27 11
+next.config.ts
+  s_774c09bc79cfb4::t_eb0f50cf737005 4
+playwright.config.ts
+  s_774c09bc79cfb4::t_9dfe5952942d4c 4-5,7,16
+src/app/api/actions/[id]/route.ts
+  s_774c09bc79cfb4::t_b9cd700fe1d096 1-13
+src/app/globals.css
+  s_774c09bc79cfb4::t_a5f1db630b891a 63-98
+src/components/action-review.tsx
+  s_774c09bc79cfb4::t_77501fceebaba0 1-31
+src/components/invoice-detail.tsx
+  s_774c09bc79cfb4::t_9de06c4b9a9823 1-30
+src/components/invoice-list.tsx
+  s_774c09bc79cfb4::t_7c25eac7c7f4dc 1-16
+src/components/workspace.tsx
+  s_774c09bc79cfb4::t_61d05b4408642f 3-6,9-16,19-29,35-36,38,43-51,53,55-63
+src/lib/contracts.ts
+  s_774c09bc79cfb4::t_e29ecaf4f1d255 29-30,81-88
+src/lib/http.ts
+  s_774c09bc79cfb4::t_f4063dc08febaf 12-15
+src/lib/store.ts
+  s_774c09bc79cfb4::t_f4cd6d276747c8 7,12-13,61-63,168-216,245
+tests/actions.test.ts
+  s_774c09bc79cfb4::t_ce1932c0287170 1-19
+tests/domain.test.ts
+  s_774c09bc79cfb4::t_57e5068dcb002b 130-200
+tests/workflow.spec.ts
+  s_774c09bc79cfb4::t_8bea2a8813e500 1-17
+tsconfig.json
+  s_774c09bc79cfb4::t_c771572b6f52df 4-8,26-28,37-41,43-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "72257303163e9de21d021677890afb8f411bd62a",
+  "prompts": {},
+  "humans": {
+    "h_3f7c194ad24a0c": {
+      "author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  },
+  "sessions": {
+    "s_774c09bc79cfb4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f9ba-dce4-71e3-82ce-6fb801a1bf38",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "brian-an <brian.an0906@hotmail.com>"
+    }
+  }
+}
