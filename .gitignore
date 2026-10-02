@@ -46,3 +46,7 @@ next-env.d.ts
 .data/
 playwright-report/
 test-results/
+
+.next-e2e/
+
+.next-preview/

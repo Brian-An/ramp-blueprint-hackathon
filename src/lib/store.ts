@@ -4,12 +4,13 @@ import { z } from "zod";
 import { overdueDays, remainingCents } from "./accounting";
 import { RunError } from "./agent/errors";
 import { validateProposalAction } from "./agent/run";
+import { HttpError } from "./http";
 import { INITIAL_DEMO_DATE } from "./demo-data";
 import {
   actionSchema, activitySchema, customerSchema, demoSeedSchema, emailSchema,
   invoiceSchema, investigationSummarySchema, outboxEntrySchema, paymentSchema,
-  proposalSchema, settingsSchema, workspaceSnapshotSchema,
-  type Action, type Customer, type DemoSeed, type Email, type Invoice, type Payment, type Proposal, type WorkspaceSnapshot,
+  proposalSchema, reviewCommandSchema, settingsSchema, workspaceSnapshotSchema,
+  type ReviewCommand, type Action, type Customer, type DemoSeed, type Email, type Invoice, type Payment, type Proposal, type WorkspaceSnapshot,
 } from "./contracts";
 
 const invoiceColumns = `id, customer_id AS customerId, number, amount_cents AS amountCents,
@@ -56,6 +57,9 @@ export function createStore(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS outbox (
       id TEXT PRIMARY KEY, action_id TEXT NOT NULL REFERENCES actions(id), recipient TEXT NOT NULL,
       subject TEXT NOT NULL, body TEXT NOT NULL, recorded_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS approved_requests (
+      action_id TEXT PRIMARY KEY REFERENCES actions(id), request_version INTEGER NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS activity (
       id TEXT PRIMARY KEY, invoice_id TEXT REFERENCES invoices(id), kind TEXT NOT NULL,
@@ -161,6 +165,55 @@ export function createStore(db: Database.Database) {
     }).immediate();
   }
 
+  function reviewAction(actionId: string, input: ReviewCommand): Action {
+    const command = reviewCommandSchema.parse(input);
+    return db.transaction(() => {
+      if (getSettings().generationId !== command.generationId) throw new RunError("STALE_CONTEXT");
+      const row = db.prepare("SELECT invoice_id AS invoiceId FROM actions WHERE id = ?").get(actionId);
+      if (!row) throw new HttpError(404, "ACTION_NOT_FOUND", "The action is unavailable.");
+      const { invoiceId } = z.object({ invoiceId: z.string() }).parse(row);
+      const action = getActionHistory(invoiceId).find(item => item.id === actionId)!;
+      const conflict = () => new HttpError(409, "STALE_ACTION", "This action changed. Refresh the workspace and review it again.");
+      const approved = db.prepare("SELECT request_version AS requestVersion FROM approved_requests WHERE action_id = ?").get(actionId);
+      // Compare against the immutable approval request before checking current business state.
+      if (command.operation === "approve" && approved) {
+        const { requestVersion } = z.object({ requestVersion: z.number() }).parse(approved);
+        const email = outboxEntrySchema.parse(db.prepare("SELECT id, action_id AS actionId, recipient, subject, body, recorded_at AS recordedAt FROM outbox WHERE action_id = ?").get(actionId));
+        if (command.expectedVersion === requestVersion && command.recipient === email.recipient && command.subject === email.subject && command.body === email.body) return action;
+        throw conflict();
+      }
+      const invoice = getInvoice(invoiceId)!;
+      if (action.generationId !== command.generationId || invoice.contextVersion !== action.contextVersion || command.expectedVersion !== action.version || remainingCents(invoice, getPayments(invoiceId)) === 0) throw conflict();
+      const kind = action.proposal.action.kind;
+      let status: Action["status"];
+      let description: string;
+      let eventKind: string;
+      if (command.operation === "dismiss") {
+        if (action.status !== "pending" && action.status !== "accepted") throw conflict();
+        status = "dismissed"; description = "Owner dismissed the proposed action."; eventKind = "dismissal";
+      } else if (command.operation === "complete") {
+        if (kind !== "owner_task" || action.status !== "accepted") throw conflict();
+        status = "completed"; description = "Owner marked the task complete. Completion is self-reported; no invoice or portal was edited by this app."; eventKind = "completion";
+        db.prepare("UPDATE invoices SET context_version = context_version + 1 WHERE id = ?").run(invoiceId);
+        db.prepare("UPDATE actions SET status = 'superseded', version = version + 1 WHERE invoice_id = ? AND id != ? AND status IN ('pending', 'accepted')").run(invoiceId, actionId);
+      } else {
+        if (action.status !== "pending") throw conflict();
+        if (kind === "send_email") {
+          if (!command.recipient || command.recipient !== getCustomer(invoice.customerId)?.email || !command.subject || !command.body) throw new HttpError(400, "INVALID_APPROVAL", "Review the recipient, subject and body before approval.");
+          db.prepare("INSERT INTO outbox (id, action_id, recipient, subject, body, recorded_at) VALUES (?, ?, ?, ?, ?, ?)").run(randomUUID(), actionId, command.recipient, command.subject, command.body, new Date().toISOString());
+          db.prepare("INSERT INTO approved_requests (action_id, request_version) VALUES (?, ?)").run(actionId, command.expectedVersion);
+          status = "executed"; description = "Owner approved the exact reviewed email for the simulated outbox. No external email was sent.";
+        } else if (kind === "owner_task" && action.proposal.action.task && action.proposal.action.task.length <= 8000) {
+          status = "accepted"; description = "Owner accepted the task. Perform it outside this application, then mark it complete.";
+        } else throw new HttpError(400, "INVALID_APPROVAL", "This proposal has no executable approval.");
+        eventKind = "approval";
+      }
+      db.prepare("UPDATE actions SET status = ?, version = version + 1 WHERE id = ?").run(status, actionId);
+      db.prepare("INSERT INTO activity (id, invoice_id, kind, description, created_at) VALUES (?, ?, ?, ?, ?)").run(randomUUID(), invoiceId, eventKind, description, new Date().toISOString());
+      return { ...action, status, version: action.version + 1 };
+    }).immediate();
+  }
+
   function getDemoDate(): string {
     return settingsSchema.pick({ demoDate: true }).parse(db.prepare("SELECT demo_date AS demoDate FROM settings WHERE id = 1").get()).demoDate;
   }
@@ -189,7 +242,7 @@ export function createStore(db: Database.Database) {
     });
   }
 
-  return { seed, snapshot, getInvoice, getCustomer, getPayments, searchEmails, getThread, getActionHistory, getDemoDate, getSettings, getInvestigation, saveInvestigation, close: () => db.close() };
+  return { seed, snapshot, getInvoice, getCustomer, getPayments, searchEmails, getThread, getActionHistory, getDemoDate, getSettings, getInvestigation, saveInvestigation, reviewAction, close: () => db.close() };
 }
 
 export type Store = ReturnType<typeof createStore>;

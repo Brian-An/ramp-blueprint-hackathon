@@ -9,7 +9,10 @@ export class HttpError extends Error {
 export function assertSameOriginJson(request: Request): void {
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
-  if ((origin && origin !== new URL(request.url).origin) || (site && site !== "same-origin" && site !== "none")) throw new HttpError(400, "INVALID_REQUEST", "Use this workspace to submit changes.");
+  // Next normalizes the internal request URL to localhost; Host preserves the browser origin.
+  const url = new URL(request.url);
+  const expectedOrigin = request.headers.get("host") ? `${url.protocol}//${request.headers.get("host")}` : url.origin;
+  if ((origin && origin !== expectedOrigin) || (site && site !== "same-origin" && site !== "none")) throw new HttpError(400, "INVALID_REQUEST", "Use this workspace to submit changes.");
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") throw new HttpError(400, "INVALID_REQUEST", "Send a JSON request.");
 }
 

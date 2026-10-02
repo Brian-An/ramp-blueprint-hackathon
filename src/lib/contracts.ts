@@ -26,8 +26,8 @@ export const proposalSchema = z.strictObject({
   evidence: z.array(z.strictObject({ emailId: idSchema, quote: z.string().min(1) })),
   action: z.strictObject({
     kind: z.enum(["send_email", "owner_task", "wait", "none"]),
-    recipient: z.email().nullable(), subject: z.string().nullable(), body: z.string().nullable(),
-    task: z.string().nullable(), followUpDate: dateOnlySchema.nullable(),
+    recipient: z.email().nullable(), subject: z.string().max(200).nullable(), body: z.string().max(8000).nullable(),
+    task: z.string().max(8000).nullable(), followUpDate: dateOnlySchema.nullable(),
   }),
 });
 export const actionStatusSchema = z.enum(["pending", "accepted", "executed", "completed", "dismissed", "superseded"]);
@@ -78,3 +78,11 @@ export type DemoSeed = z.infer<typeof demoSeedSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
 export type Activity = z.infer<typeof activitySchema>;
+
+export const reviewCommandSchema = z.strictObject({
+  operation: z.enum(["approve", "dismiss", "complete"]), generationId: idSchema,
+  expectedVersion: z.number().int().positive(), recipient: z.email().optional(),
+  subject: z.string().max(200).refine(value => value.trim().length > 0).optional(),
+  body: z.string().max(8000).refine(value => value.trim().length > 0).optional(),
+});
+export type ReviewCommand = z.infer<typeof reviewCommandSchema>;

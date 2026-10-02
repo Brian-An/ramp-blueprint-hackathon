@@ -127,3 +127,74 @@ describe("seed and persistence", () => {
     expect(proposalSchema.safeParse({ blocker: "none", explanation: "Paid", evidence: [], action: { kind: "none" } }).success).toBe(false);
   });
 });
+
+const emailProposal = proposalSchema.parse({
+  blocker: "missing_po", explanation: "Acme needs the purchase order.",
+  evidence: [{ emailId: "EMAIL-101-1", quote: "We need your PO number before we can process INV-101." }],
+  action: { kind: "send_email", recipient: "ap@acme.example", subject: "PO for INV-101", body: "Please share the PO.", task: null, followUpDate: null },
+});
+function pendingEmail(store: ReturnType<typeof createTestStore>) {
+  return store.saveInvestigation("INV-101", store.getSettings().generationId, 1, emailProposal)!;
+}
+function approve(action: ReturnType<typeof pendingEmail>) {
+  return { operation: "approve" as const, generationId: action.generationId, expectedVersion: action.version, recipient: "ap@acme.example", subject: "Reviewed subject", body: "Exactly what I reviewed.\nThank you." };
+}
+describe("owner action review", () => {
+  it("records edited email and approval activity exactly once and replays the original request", () => {
+    const store = createTestStore();
+    try {
+      const action = pendingEmail(store); const command = approve(action);
+      const executed = store.reviewAction(action.id, command);
+      expect(executed.status).toBe("executed"); expect(executed.version).toBe(2);
+      expect(store.reviewAction(action.id, command)).toEqual(executed);
+      expect(store.snapshot().outbox).toHaveLength(1);
+      expect(store.snapshot().outbox[0]).toMatchObject({ recipient: command.recipient, subject: command.subject, body: command.body });
+      expect(store.snapshot().activity.filter(x => x.kind === "approval")).toHaveLength(1);
+      expect(store.getInvoice("INV-101")?.contextVersion).toBe(1);
+      expect(() => store.reviewAction(action.id, { ...command, body: "Different" })).toThrow();
+      expect(() => store.reviewAction(action.id, { ...command, expectedVersion: 2 })).toThrow();
+    } finally { store.close(); }
+  });
+  it("rejects stale versions, foreign recipients, blank or oversized content without effects", () => {
+    const store = createTestStore();
+    try {
+      const action = pendingEmail(store); const command = approve(action);
+      for (const invalid of [{ expectedVersion: 2 }, { generationId: "old" }, { recipient: "ap@birch.example" }, { body: " " }, { subject: "s".repeat(201) }, { body: "b".repeat(8001) }]) {
+        expect(() => store.reviewAction(action.id, { ...command, ...invalid })).toThrow();
+      }
+      expect(store.snapshot().outbox).toEqual([]); expect(store.getActionHistory("INV-101")[0].status).toBe("pending");
+    } finally { store.close(); }
+  });
+  it("dismisses without email or business changes and retains the cached proposal", () => {
+    const store = createTestStore();
+    try {
+      const action = pendingEmail(store);
+      expect(store.reviewAction(action.id, { operation: "dismiss", generationId: action.generationId, expectedVersion: 1 }).status).toBe("dismissed");
+      expect(pendingEmail(store)?.status).toBe("dismissed");
+      expect(store.getInvoice("INV-101")?.contextVersion).toBe(1); expect(store.snapshot().outbox).toEqual([]);
+    } finally { store.close(); }
+  });
+  it("accepts before completing owner tasks, creates no email and increments context on completion", () => {
+    const store = createTestStore();
+    try {
+      const task = store.saveInvestigation("INV-101", store.getSettings().generationId, 1, { ...emailProposal, action: { kind: "owner_task", task: "Correct the invoice with the supplied PO.", recipient: null, subject: null, body: null, followUpDate: null } })!;
+      expect(() => store.reviewAction(task.id, { operation: "complete", generationId: task.generationId, expectedVersion: 1 })).toThrow();
+      const accepted = store.reviewAction(task.id, { operation: "approve", generationId: task.generationId, expectedVersion: 1 });
+      expect(accepted.status).toBe("accepted"); expect(store.getInvoice("INV-101")?.contextVersion).toBe(1);
+      const completed = store.reviewAction(task.id, { operation: "complete", generationId: task.generationId, expectedVersion: accepted.version });
+      expect(completed.status).toBe("completed"); expect(store.getInvoice("INV-101")?.contextVersion).toBe(2); expect(store.snapshot().outbox).toEqual([]);
+    } finally { store.close(); }
+  });
+  it("rolls back outbox and status if activity insertion fails, and replays before context checks", () => {
+    const db = new Database(":memory:"); const store = createStore(db); store.seed(demoSeed);
+    try {
+      const action = pendingEmail(store); const command = approve(action);
+      db.exec("CREATE TRIGGER fail_approval BEFORE INSERT ON activity WHEN NEW.kind = 'approval' BEGIN SELECT RAISE(ABORT, 'failure'); END");
+      expect(() => store.reviewAction(action.id, command)).toThrow(); expect(store.snapshot().outbox).toEqual([]); expect(store.getActionHistory("INV-101")[0].status).toBe("pending");
+      db.exec("DROP TRIGGER fail_approval");
+      store.reviewAction(action.id, command);
+      db.exec("UPDATE invoices SET context_version = 2 WHERE id = 'INV-101'; UPDATE actions SET version = 3 WHERE invoice_id = 'INV-101'");
+      expect(store.reviewAction(action.id, command).status).toBe("executed"); expect(store.snapshot().outbox).toHaveLength(1);
+    } finally { store.close(); }
+  });
+});
